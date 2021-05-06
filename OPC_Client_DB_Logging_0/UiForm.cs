@@ -89,9 +89,9 @@ namespace OPC_Client_DB_Logging_0
                 waveformGraph1.PlotYAppend(opcdatadoub);
 
             }
-            catch (TimeoutException)
+            catch (Exception e)
             {
-                MessageBox.Show("The read has timed out.", "Timeout");
+                MessageBox.Show("The read has timed out.", "Timeout" + e);
                 return;
             }
 
