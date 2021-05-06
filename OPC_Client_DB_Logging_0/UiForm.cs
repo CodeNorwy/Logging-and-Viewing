@@ -11,26 +11,30 @@ using System.Data.SqlClient;
 using System.Configuration;
 using System.Windows.Forms.DataVisualization.Charting;
 using NationalInstruments.NetworkVariable;
+using System.Threading;
 
 namespace OPC_Client_DB_Logging_0
 {
     public partial class UiForm : Form
     {
-        string value;
-        string quality;
-        string type;
+        string value, quality, type, value2, quality2, type2;
 
         private string connectionString =
         ConfigurationManager.ConnectionStrings
         ["ScadaDatabase"].ConnectionString;
 
         private NetworkVariableReader<double> _reader;
-        private const string NetworkVariableLocation = @"\\localhost\SCADA\OPC_SCADA.Configured Aliases.testS1";
+        private const string NetworkVariableLocation = @"\\localhost\SCADA\PV";
+        private NetworkVariableReader<double> _reader2;
+        private const string NetworkVariableLocation2 = @"\\localhost\SCADA\MV";
+
+        
 
         public UiForm()
         {
             InitializeComponent();
             txtConStringDB.Text = connectionString;
+            cmbLogInterval.Text = "1000";
         }
 
         private void timer1_Tick(object sender, EventArgs e)
@@ -39,6 +43,7 @@ namespace OPC_Client_DB_Logging_0
             ConnectOPC();
             ReadOPC();
             _reader.Disconnect();
+            _reader2.Disconnect();
         }
 
         private void ConnectOPC() //OPC connection
@@ -46,6 +51,9 @@ namespace OPC_Client_DB_Logging_0
             txtConStrOPC.Text = NetworkVariableLocation;
             _reader = new NetworkVariableReader<double>(NetworkVariableLocation);
             _reader.Connect();
+            txtConStrOPC.AppendText("    And    " + NetworkVariableLocation);
+            _reader2 = new NetworkVariableReader<double>(NetworkVariableLocation2);
+            _reader2.Connect();
             lblStatusOPC.Text = _reader.ConnectionStatus.ToString();
 
             if (lblStatusOPC.Text == "Connected")
@@ -57,11 +65,6 @@ namespace OPC_Client_DB_Logging_0
                 lblStatusOPC.Text = "Not Connected";
                 lblStatusOPC.ForeColor = System.Drawing.Color.Red;
             }
-        }
-
-        private void InsertData() //Inserting data to database
-        {
-            
         }
 
         private void GetData() //Gets data from the database
@@ -76,17 +79,27 @@ namespace OPC_Client_DB_Logging_0
         private void ReadOPC()
         {
             NetworkVariableData<double> opcdata = null;
+            NetworkVariableData<double> opcdata2 = null;
             try
             {
                 opcdata = _reader.ReadData();
+                opcdata2 = _reader2.ReadData();
                 value = opcdata.GetValue().ToString();
+                value2 = opcdata2.GetValue().ToString();
                 quality = opcdata.Quality.ToString();
+                quality2 = opcdata2.Quality.ToString();
                 type = opcdata.GetType().ToString();
-                txtReadValue.Text = value;
-                txtReadQuality.Text = quality;
-                txtReadType.Text = type;
+                type2 = opcdata2.GetType().ToString();
+                txtReadValuePV.Text = value;
+                txtReadQualityPV.Text = quality;
+                txtReadTypePV.Text = type;
+                txtReadValueMV.Text = value2;
+                txtReadQualityMV.Text = quality2;
+                txtReadTypeMV.Text = type2;
                 double opcdatadoub = opcdata.GetValue();
+                double opcdatadoub2 = opcdata2.GetValue();
                 waveformGraph1.PlotYAppend(opcdatadoub);
+                waveformGraph2.PlotYAppend(opcdatadoub2);
 
             }
             catch (Exception e)
@@ -99,9 +112,12 @@ namespace OPC_Client_DB_Logging_0
 
         private void timer2_Tick(object sender, EventArgs e)
         {
-            InsertData();
             Database db = new Database();
-            db.InsertValue(connectionString, value, quality, lblStatusDB);
+            db.InsertValue(connectionString, value, quality, lblStatusDB, 1);
+
+            Database db2 = new Database();
+            db2.InsertValue(connectionString, value2, quality2, lblStatusDB, 2);
+
             timer2.Interval = Convert.ToInt32(cmbLogInterval.Text);
         }
 
@@ -116,23 +132,13 @@ namespace OPC_Client_DB_Logging_0
                     btnLog.Text = "Stop Logging";
                     break;
              default:
-                    timer2.Start();
+                    timer2.Stop();
                     btnLog.Text = "Start Logging";
                     break;
             }
             count++;
             timer2.Interval = Convert.ToInt32(cmbLogInterval.Text);
             timer2.Start();
-        }
-
-        private void label6_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void cmbLogInterval_SelectedIndexChanged(object sender, EventArgs e)
-        {
-
         }
     }
 
@@ -146,6 +152,14 @@ namespace OPC_Client_DB_Logging_0
         public string Quality { get; set; }
 
         private int GridlinesOffset = 0;
+
+        public static Semaphore _pool;
+
+        public Database()
+        {
+            _pool = new Semaphore(0, 3);
+            _pool.Release(3);
+        }
 
         private void InitChart(Chart chrtSensorData)
         {
@@ -199,11 +213,11 @@ namespace OPC_Client_DB_Logging_0
                 MessageBox.Show("The connection has timed out.", "Timeout");
                 throw;
             }
-            
         }
 
-        public void InsertValue(string connectionString, string value, string quality, Label lblStatus)
+        public void InsertValue(string connectionString, string value, string quality, Label lblStatus, int num)
         {
+            _pool.WaitOne();
             try
             {
                 lblStatus.ForeColor = System.Drawing.Color.Green;
@@ -213,8 +227,8 @@ namespace OPC_Client_DB_Logging_0
                 con2.Open();
                 SqlCommand cmd = new SqlCommand(cmdSQL, con2);
                 cmd.CommandType = CommandType.StoredProcedure;
-                cmd.Parameters.AddWithValue("@TagId", SqlDbType.Int).Value = 1;
-                cmd.Parameters.AddWithValue("@Value", SqlDbType.Float).Value = value;
+                cmd.Parameters.AddWithValue("@TagId", SqlDbType.Int).Value = num;
+                cmd.Parameters.AddWithValue("@Value", SqlDbType.Float).Value = Convert.ToDouble(value);
                 cmd.Parameters.AddWithValue("@Quality", SqlDbType.Char).Value = quality;
                 cmd.ExecuteNonQuery();
                 con2.Close();
@@ -224,7 +238,7 @@ namespace OPC_Client_DB_Logging_0
                 MessageBox.Show("The connection has timed out.", "Timeout");
                 throw;
             }
-            
+            _pool.Release();
         }
     }
 }
